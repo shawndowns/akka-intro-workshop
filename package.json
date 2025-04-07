@@ -1,0 +1,30 @@
+{
+  "name": "akka-intro-workshop",
+  "version": "1.0.0",
+  "description": "akka-intro-workshop",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shawndowns/akka-intro-workshop.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/shawndowns/akka-intro-workshop/issues"
+  },
+  "homepage": "https://github.com/shawndowns/akka-intro-workshop#readme",
+  "dependencies": {
+    "@grpc/grpc-js": "^1.13.2",
+    "@grpc/proto-loader": "^0.7.13",
+    "@types/ws": "^8.18.1",
+    "esbuild": "^0.25.2",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.3",
+    "ws": "^8.18.1"
+  }
+}
