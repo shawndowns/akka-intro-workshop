@@ -98,11 +98,13 @@ const wss = new WebSocket.Server({
 wss.on('connection', (ws: WebSocket.WebSocket) => {
   console.log('Client connected to WebSocket');
   
-  // Communication variables
+  // Communication variables for this specific connection
+  let aiContextId: string | null = null; // Initialize as null
+  let cartId: string | null = null; // Initialize as null
   let isStreaming = false;
   let grpcClient: any = null;
   let call: any = null;
-  
+
   // Handle messages from WebSocket client
   ws.on('message', (message) => {
     try {
@@ -264,6 +266,119 @@ wss.on('connection', (ws: WebSocket.WebSocket) => {
         return;
       }
       
+      // Handle the new startStream message
+      if (parsedMessage.type === 'startStream') {
+        if (!grpcClient) {
+          ws.send(JSON.stringify({
+            status: 'error',
+            message: 'gRPC client not initialized. Cannot start stream.'
+          }));
+          return;
+        }
+        if (isStreaming || call) {
+            ws.send(JSON.stringify({
+                status: 'warning',
+                message: 'Stream already started.'
+            }));
+            return;
+        }
+
+        aiContextId = parsedMessage.aiContextId;
+        cartId = parsedMessage.cartId;
+
+        if (!aiContextId || !cartId) {
+           ws.send(JSON.stringify({
+             status: 'error',
+             message: 'startStream message missing aiContextId or cartId.'
+           }));
+           return;
+        }
+
+        console.log(`Received startStream: aiContextId=${aiContextId}, cartId=${cartId}`);
+
+        // Now initiate the gRPC stream
+        try {
+            if (typeof grpcClient[EXPECTED_STREAM_METHOD] !== 'function') {
+                throw new Error(`Method '${EXPECTED_STREAM_METHOD}' not found on gRPC client.`);
+            }
+            console.log(`Starting gRPC stream with method: ${EXPECTED_STREAM_METHOD}`);
+            call = grpcClient[EXPECTED_STREAM_METHOD]();
+            isStreaming = true;
+            console.log('gRPC stream initiated.');
+
+            // Send the initial ContextIds message using the received IDs
+            // Use plain JS object matching the StreamInput structure
+            const initialStreamInput = { 
+              context_ids: { 
+                ai_context_id: aiContextId, 
+                cart_id: cartId 
+              }
+            };
+
+            console.log('Sending initial ContextIds (plain object):', JSON.stringify(initialStreamInput));
+            call.write(initialStreamInput);
+
+            // Setup handlers for the gRPC call
+             call.on('data', (response: any) => {
+                console.log('Received gRPC response:', response);
+                if (ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({
+                        status: 'data',
+                        message: 'Content from server',
+                        data: {
+                            message: response.message || JSON.stringify(response)
+                        }
+                    }));
+                }
+            });
+            
+            call.on('end', () => {
+                console.log('gRPC stream ended');
+                isStreaming = false;
+                call = null;
+                aiContextId = null; // Clear IDs when stream ends
+                cartId = null;
+                if (ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({
+                        status: 'info',
+                        message: 'gRPC stream ended'
+                    }));
+                }
+            });
+            
+            call.on('error', (err: Error) => {
+                console.error('gRPC stream error:', err);
+                isStreaming = false;
+                call = null;
+                aiContextId = null; // Clear IDs on error
+                cartId = null;
+                if (ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({
+                        status: 'error',
+                        message: `gRPC stream error: ${err.message}`,
+                        details: err.stack
+                    }));
+                }
+            });
+            
+            console.log('Stream handlers set up');
+            ws.send(JSON.stringify({ status: 'success', message: 'gRPC stream started successfully.' }));
+
+        } catch (e) {
+            const errorMessage = e instanceof Error ? e.message : String(e);
+            console.error('Error starting gRPC stream:', errorMessage);
+            ws.send(JSON.stringify({
+                status: 'error',
+                message: `Failed to start gRPC stream: ${errorMessage}`
+            }));
+            isStreaming = false; // Ensure state is reset
+            call = null;
+            aiContextId = null;
+            cartId = null;
+        }
+        return; // Finished handling startStream
+      }
+      
       // For image or audio data
       if (parsedMessage.data && typeof parsedMessage.data === 'string' && 
           parsedMessage.data.startsWith('data:')) {
@@ -300,130 +415,40 @@ wss.on('connection', (ws: WebSocket.WebSocket) => {
         
         // Try to send data to gRPC service
         try {
-          // If we don't have an active stream, create one
+          // If we don't have an active stream, reject the data
           if (!isStreaming || !call) {
-            console.log('Starting new gRPC stream');
-            
-            try {
-              // Check if the expected stream method exists on the client
-              if (typeof grpcClient[EXPECTED_STREAM_METHOD] !== 'function') {
-                throw new Error(`Method '${EXPECTED_STREAM_METHOD}' not found on gRPC client. Available methods: ${Object.keys(grpcClient).join(', ')}`);
-              }
-              
-              console.log(`Calling method: ${EXPECTED_STREAM_METHOD}`);
-              
-              // Create a streaming call with proper error handling
-              call = grpcClient[EXPECTED_STREAM_METHOD]({
-                "deadline": Date.now() + 60000  // 60 second deadline - adjust as needed
-              });
-              isStreaming = true;
-              
-              // Handle incoming responses from gRPC server
-              call.on('data', (response: any) => {
-                console.log('Received gRPC response:', response);
-                
-                if (ws.readyState === WebSocket.OPEN) {
-                  // Send a cleaner formatted message to the client
-                  ws.send(JSON.stringify({
-                    status: 'data',
-                    message: 'Content from server',
-                    data: {
-                      message: response.message || JSON.stringify(response)
-                    }
-                  }));
-                }
-              });
-              
-              call.on('end', () => {
-                console.log('gRPC stream ended');
-                isStreaming = false;
-                call = null;
-                
-                if (ws.readyState === WebSocket.OPEN) {
-                  ws.send(JSON.stringify({
-                    status: 'info',
-                    message: 'gRPC stream ended'
-                  }));
-                }
-              });
-              
-              call.on('error', (err: Error) => {
-                console.error('gRPC stream error:', err);
-                console.error('Error details:', err.stack || 'No stack trace available');
-                isStreaming = false;
-                call = null;
-                
-                if (ws.readyState === WebSocket.OPEN) {
-                  ws.send(JSON.stringify({
-                    status: 'error',
-                    message: `gRPC stream error: ${err.message}`,
-                    details: err.stack
-                  }));
-                }
-              });
-              
-              console.log('Stream handlers set up');
-            } catch (e) {
-              const errorMessage = e instanceof Error ? e.message : String(e);
-              console.error('Error setting up gRPC stream:', errorMessage);
-              ws.send(JSON.stringify({
-                status: 'error',
-                message: `Failed to set up gRPC stream: ${errorMessage}`
-              }));
-              return;
-            }
+            console.log('Received data chunk but gRPC stream is not active. Ignoring.');
+            ws.send(JSON.stringify({
+              status: 'warning',
+              message: 'Stream not started. Please start the stream first.'
+            }));
+            return; 
           }
           
           // Send the data through the gRPC stream
-          // Format the message to exactly match what Python client is sending
-          // Python uses: video_service_pb2.Chunk(mime_type=mime_type, payload=image_bytes)
-          if (!ChunkType) {
-            console.log('ChunkType is not available, using simple object');
-          }
-          
-          // Create the message with mime_type and payload
+          // Create the chunk message
           const messageType = parsedMessage.type;
-          
-          // Extract the actual MIME type from the data URL header if possible
-          let mimeType;
-          if (messageType === 'audio') {
-            const audioFormatMatch = header.match(/data:(audio\/[^;]+);/);
-            mimeType = audioFormatMatch ? audioFormatMatch[1] : 'audio/pcm';
-            console.log(`Using audio MIME type: ${mimeType} (extracted from header: ${!!audioFormatMatch})`);
+          let mimeType = messageType === 'audio' ? 'audio/pcm' : 'image/jpeg'; // Keep simple for now
+          // Try to extract actual mime type
+          const headerMatch = header.match(/data:([^;]+);/);
+          if (headerMatch && headerMatch[1]) {
+             mimeType = headerMatch[1];
+             console.log(`Using extracted MIME type: ${mimeType}`);
           } else {
-            // For images, continue using image/jpeg
-            mimeType = 'image/jpeg';
+             console.log(`Could not extract MIME type from header: ${header}. Using default: ${mimeType}`);
           }
-          
-          // Create the message with mime_type and payload
-          const message = {
-            mime_type: mimeType,
-            payload: binary
-          };
-          
-          console.log(`Sending ${messageType} data to gRPC service (${binary.length} bytes)`);
-          console.log('Message structure:', JSON.stringify({
-            mime_type: mimeType,
-            payload_length: binary.length // Log length instead of full payload
-          }));
-          
-          // Add additional debug info for the audio format
-          if (messageType === 'audio') {
-            // Try to determine more details about the audio format from the header
-            const audioFormatMatch = header.match(/data:(audio\/[^;]+);/);
-            const actualMimeType = audioFormatMatch ? audioFormatMatch[1] : 'unknown';
-            
-            console.log(`Actual audio MIME type from header: ${actualMimeType}`);
-            console.log(`Using MIME type for gRPC: ${mimeType}`);
-            
-            // If the header suggests a different format than what we're using, warn about it
-            if (actualMimeType !== 'unknown' && actualMimeType !== mimeType) {
-              console.warn(`WARNING: Client is sending ${actualMimeType} but we're telling gRPC it's ${mimeType}`);
-              console.warn('Consider updating the audio MIME type to match what the client is sending');
+
+          // Send chunk data wrapped in StreamInput using plain object
+          const chunkStreamInput = { 
+            chunk: { 
+              mime_type: mimeType, 
+              payload: binary 
             }
-          }
-          
-          call.write(message);
+          };
+
+          console.log(`Sending chunk data wrapped in StreamInput (plain object)`);
+          call.write(chunkStreamInput);
+          // ---------------------------------------------
           
           // Also echo to the client that we received the data
           ws.send(JSON.stringify({

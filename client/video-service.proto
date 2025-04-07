@@ -11,6 +11,18 @@ message Ack {
   string message = 1;
 }
 
+message ContextIds {
+  string ai_context_id = 1;
+  string cart_id = 2;
+}
+
+message StreamInput {
+  oneof content {
+    ContextIds context_ids = 1;
+    Chunk chunk = 2;
+  }
+}
+
 service VideoServiceEndpoint {
-  rpc StreamVideo (stream Chunk) returns (stream Ack);
+  rpc StreamVideo (stream StreamInput) returns (stream Ack);
 }

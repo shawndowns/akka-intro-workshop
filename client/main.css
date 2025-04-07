@@ -161,6 +161,13 @@ textarea {
   background-color: var(--secondary);
   color: var(--white);
 }
+
+input {
+  border: 1px solid #4e4e4e;
+  background-color: var(--secondary);
+  color: var(--white);
+}
+
 .context-container {
   margin-bottom: 20px;
   display: flex;
@@ -169,7 +176,6 @@ textarea {
   padding: 15px;
   border-radius: 8px;
   border: 1px solid #4e4e4e;
-  display: none;
 }
 
 .context-container label {

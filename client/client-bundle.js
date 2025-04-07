@@ -17,14 +17,17 @@
       this.messageBuffer = [];
       this.messageBufferTimer = null;
       this.isBufferingMessages = false;
+      this.cartContentsElement = null;
       this.videoElement = document.getElementById("webcam");
       this.canvas = document.getElementById("canvas");
       this.responseContainer = document.getElementById("responses");
       this.statusElement = document.getElementById("status");
+      this.cartContentsElement = document.getElementById("cartContents");
       const toggleButton = document.getElementById("toggleButton");
       const sendContextButton = document.getElementById("sendContextButton");
       const debugButton = document.getElementById("debugButton");
       const videoToggleButton = document.getElementById("videoToggleButton");
+      const addItemButton = document.getElementById("addItemButton");
       if (toggleButton) {
         toggleButton.addEventListener("click", () => this.toggleRecording());
       } else {
@@ -44,6 +47,11 @@
         videoToggleButton.addEventListener("click", () => this.toggleVideoVisibility());
       } else {
         console.error("Video toggle button not found");
+      }
+      if (addItemButton) {
+        addItemButton.addEventListener("click", () => this.addItemToCart());
+      } else {
+        console.error("Add item button not found");
       }
       this.updateStatus("Ready");
     }
@@ -107,62 +115,96 @@
         this._audioContext = audioContext;
         this._audioProcessor = processor;
         this.updateStatus("Connecting to server...");
-        this.connectToWebSocket();
-        this.imageInterval = window.setInterval(() => {
-          this.captureAndSendImage();
-        }, 1e3);
+        this.connectToWebSocket().then(() => {
+          const aiContextIdInput = document.getElementById("aiContextIdInput");
+          const cartIdInput = document.getElementById("cartIdInput");
+          const aiContextId = aiContextIdInput.value;
+          const cartId = cartIdInput.value;
+          if (!aiContextId || !cartId) {
+            console.error("AI Context ID or Cart ID is missing.");
+            this.updateStatus("Error: AI Context ID and Cart ID must be set before starting.", true);
+            this.stopRecording();
+            return;
+          }
+          if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+            console.log(`Sending startStream message with aiContextId: ${aiContextId}, cartId: ${cartId}`);
+            this.socket.send(JSON.stringify({
+              type: "startStream",
+              aiContextId,
+              cartId
+            }));
+          } else {
+            console.error("WebSocket not open when trying to send startStream");
+            this.updateStatus("Error: Could not initiate stream with server.", true);
+            this.stopRecording();
+            return;
+          }
+          this.updateStatus("Starting image capture...");
+          this.imageInterval = window.setInterval(() => {
+            this.captureAndSendImage();
+          }, 1e3);
+        }).catch((error) => {
+          console.error("Failed to connect WebSocket for streaming:", error);
+          this.updateStatus("Error: Failed to connect to server for streaming.", true);
+          this.stopRecording();
+        });
       } catch (error) {
         console.error("Failed to access media devices:", error);
         this.handleError(error);
       }
     }
     connectToWebSocket() {
-      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const host = window.location.hostname || "localhost";
-      const port = window.location.port || "3001";
-      const wsUrl = `${protocol}//${host}:${port}/ws`;
-      this.socket = new WebSocket(wsUrl);
-      this.socket.onopen = () => {
-        console.log("Connected to WebSocket server at", wsUrl);
-        this.updateStatus("Connected to server");
-        if (this.socket) {
-          this.socket.send(JSON.stringify({
-            type: "config"
-          }));
-        }
-      };
-      this.socket.onmessage = (event) => {
-        const message = event.data.toString();
-        try {
-          const jsonMessage = JSON.parse(message);
-          if (jsonMessage.status) {
-            if (jsonMessage.message) {
-              this.updateStatus(jsonMessage.message, jsonMessage.status === "error");
+      return new Promise((resolve, reject) => {
+        const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+        const host = window.location.hostname || "localhost";
+        const port = window.location.port || "3001";
+        const wsUrl = `${protocol}//${host}:${port}/ws`;
+        this.socket = new WebSocket(wsUrl);
+        this.socket.onopen = () => {
+          console.log("Connected to WebSocket server at", wsUrl);
+          this.updateStatus("Connected to server");
+          if (this.socket) {
+            this.socket.send(JSON.stringify({
+              type: "config"
+              // Let server know we are ready to potentially start a stream
+            }));
+          }
+          resolve();
+        };
+        this.socket.onmessage = (event) => {
+          const message = event.data.toString();
+          try {
+            const jsonMessage = JSON.parse(message);
+            if (jsonMessage.status) {
+              if (jsonMessage.message) {
+                this.updateStatus(jsonMessage.message, jsonMessage.status === "error");
+              }
+              if (jsonMessage.status === "data" && jsonMessage.data && jsonMessage.data.message) {
+                this.processMessage(jsonMessage.data.message);
+              }
+            } else {
+              this.processMessage(message);
             }
-            if (jsonMessage.status === "data" && jsonMessage.data && jsonMessage.data.message) {
-              this.processMessage(jsonMessage.data.message);
-            }
-          } else {
+          } catch (e) {
             this.processMessage(message);
           }
-        } catch (e) {
-          this.processMessage(message);
-        }
-      };
-      this.socket.onerror = (error) => {
-        console.error("WebSocket error:", error);
-        this.updateStatus("Connection error", true);
-        this.handleError(error);
-      };
-      this.socket.onclose = () => {
-        console.log("WebSocket connection closed");
-        this.updateStatus("Connection closed", this.isRecording);
-        if (this.isRecording) {
-          this.stopRecording();
-          const button = document.getElementById("toggleButton");
-          button.textContent = "Start";
-        }
-      };
+        };
+        this.socket.onerror = (error) => {
+          console.error("WebSocket error:", error);
+          this.updateStatus("Connection error", true);
+          this.handleError(error);
+          reject(error);
+        };
+        this.socket.onclose = () => {
+          console.log("WebSocket connection closed");
+          this.updateStatus("Connection closed", this.isRecording);
+          if (this.isRecording) {
+            this.stopRecording();
+            const button = document.getElementById("toggleButton");
+            button.textContent = "Start";
+          }
+        };
+      });
     }
     stopRecording() {
       this.isRecording = false;
@@ -337,32 +379,124 @@
     }
     async sendContext() {
       const contextInput = document.getElementById("contextInput");
-      if (!contextInput || !contextInput.value.trim()) {
-        this.updateStatus("Please enter context before sending", true);
+      const aiContextIdInput = document.getElementById("aiContextIdInput");
+      const context = contextInput.value;
+      const aiContextId = aiContextIdInput.value;
+      if (!context || !aiContextId) {
+        console.error("Context or AI Context ID input not found or empty.");
+        this.updateStatus("Error: Context or AI Context ID cannot be empty.", true);
         return;
       }
-      const context = contextInput.value.trim();
-      this.updateStatus("Sending context to Gemini...");
       try {
-        const response = await fetch("http://localhost:9000/ai-context/gemini-live", {
+        this.updateStatus(`Sending AI context with ID: ${aiContextId}...`);
+        const protocol = window.location.protocol;
+        const host = window.location.hostname;
+        const port = 9e3;
+        const url = `${protocol}//${host}:${port}/ai-context/${aiContextId}`;
+        const response = await fetch(url, {
           method: "POST",
           headers: {
             "Content-Type": "application/json"
           },
-          body: JSON.stringify({
-            context
-          })
+          body: JSON.stringify({ context })
         });
-        if (response.ok) {
-          this.updateStatus("Context set successfully");
-          this.addResponse(`<em>New AI context set:</em> ${context}`);
-        } else {
-          const errorText = await response.text();
-          throw new Error(`Failed to set context: ${response.status} ${errorText}`);
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
         }
+        const responseData = await response.text();
+        this.updateStatus(`AI Context set successfully (ID: ${aiContextId}): ${responseData}`);
+        console.log("AI Context set response:", responseData);
       } catch (error) {
-        console.error("Error sending context:", error);
-        this.updateStatus(`Failed to set context: ${error instanceof Error ? error.message : String(error)}`, true);
+        console.error("Error sending AI context:", error);
+        this.updateStatus("Error sending AI context.", true);
+        this.handleError(error);
+      }
+    }
+    async addItemToCart() {
+      const cartIdInput = document.getElementById("cartIdInput");
+      const productIdInput = document.getElementById("productIdInput");
+      const productNameInput = document.getElementById("productNameInput");
+      const quantityInput = document.getElementById("quantityInput");
+      const cartId = cartIdInput.value;
+      const productId = productIdInput.value;
+      const name = productNameInput.value;
+      const quantity = parseInt(quantityInput.value, 10);
+      if (!cartId || !productId || !name || isNaN(quantity) || quantity <= 0) {
+        console.error("Invalid cart item input.");
+        this.updateStatus("Error: Please provide valid Cart ID, Product ID, Name, and Quantity (>0).", true);
+        return;
+      }
+      const item = {
+        productId,
+        name,
+        quantity
+      };
+      try {
+        this.updateStatus(`Adding item '${name}' to cart ID: ${cartId}...`);
+        const protocol = window.location.protocol;
+        const host = window.location.hostname;
+        const port = 9e3;
+        const url = `${protocol}//${host}:${port}/carts/${cartId}/item`;
+        const response = await fetch(url, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(item)
+        });
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        this.updateStatus(`Item '${name}' added to cart ${cartId}.`);
+        console.log(`Item added/updated in cart ${cartId}`);
+        this.displayCart(cartId);
+      } catch (error) {
+        console.error("Error adding item to cart:", error);
+        this.updateStatus("Error adding item to cart.", true);
+        this.handleError(error);
+      }
+    }
+    async displayCart(cartId) {
+      if (!this.cartContentsElement) {
+        console.error("Cart contents element not found.");
+        return;
+      }
+      try {
+        this.updateStatus(`Fetching cart ${cartId}...`);
+        const protocol = window.location.protocol;
+        const host = window.location.hostname;
+        const port = 9e3;
+        const url = `${protocol}//${host}:${port}/carts/${cartId}`;
+        const response = await fetch(url, {
+          method: "GET"
+        });
+        if (!response.ok) {
+          if (response.status === 404) {
+            this.cartContentsElement.innerHTML = `<p>Cart ${cartId} not found.</p>`;
+            this.updateStatus(`Cart ${cartId} not found.`);
+            return;
+          }
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const cartData = await response.json();
+        this.updateStatus(`Cart ${cartId} loaded.`);
+        console.log(`Cart ${cartId} contents:`, cartData);
+        let cartHtml = `<h3>Cart: ${cartId}</h3>`;
+        if (cartData.items && cartData.items.length > 0) {
+          cartHtml += "<ul>";
+          cartData.items.forEach((item) => {
+            cartHtml += `<li>${item.name} (ID: ${item.productId}) - Quantity: ${item.quantity}</li>`;
+          });
+          cartHtml += "</ul>";
+        } else {
+          cartHtml += "<p>Cart is empty.</p>";
+        }
+        this.cartContentsElement.innerHTML = cartHtml;
+      } catch (error) {
+        console.error(`Error fetching cart ${cartId}:`, error);
+        this.updateStatus(`Error fetching cart ${cartId}.`, true);
+        this.cartContentsElement.innerHTML = `<p>Error loading cart ${cartId}.</p>`;
+        this.handleError(error);
       }
     }
   };

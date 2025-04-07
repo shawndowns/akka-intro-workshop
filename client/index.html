@@ -24,18 +24,32 @@
         <div class="container">
             <div class="context-container">
                 <label for="contextInput">AI Context:</label>
-                <textarea id="contextInput" placeholder="Enter context instructions for Gemini AI..." rows="5">This is Shawn. He is trying to learn ASL alphabet. He will show you a sign and guess what that he is showing. Please tell him correct or tell him the actual sign he is holding up. If he is not holding up a valid ASL alphabet sign then please tell him it is not a valid sign.</textarea>
+                <textarea id="contextInput" placeholder="Enter context instructions for Gemini AI..." rows="5">This is John. Greet John. John is has some questions about products in a shopping cart. The shopping cart data is in this JSON:</textarea>
+                <label for="aiContextIdInput">AI Context ID:</label>
+                <input type="text" id="aiContextIdInput" value="gemini-live">
                 <button id="sendContextButton">Set AI Context</button>
+            </div>
+            <div class="context-container">
+                <label for="cartIdInput">Cart ID:</label>
+                <input type="text" id="cartIdInput" value="cart1">
+                <label for="productIdInput">Product ID:</label>
+                <input type="text" id="productIdInput" value="akka-tshirt">
+                <label for="productNameInput">Product Name:</label>
+                <input type="text" id="productNameInput" value="Akka T-shirt">
+                <label for="quantityInput">Quantity:</label>
+                <input type="number" id="quantityInput" value="1">
+                <button id="addItemButton">Add Item to Cart</button>
             </div>
             <div>
                 <button id="toggleButton">Start</button>
                 <button id="videoToggleButton">Hide Video</button>
                 <button id="debugButton" style="display: none;">Debug Mode</button>
             </div>
-            <!--div id="status" class="status" style="display: block;">Ready</div-->
+            <div id="status" class="status" style="display: block;">Ready</div>
             <video id="webcam" autoplay="" muted=""></video>
             <canvas id="canvas" style="display: none;"></canvas>
             <div id="responses" class="response-container"></div>
+            <div id="cartContents" class="cart-container"></div>
         </div>
     </div>
     <div class="container footer">
