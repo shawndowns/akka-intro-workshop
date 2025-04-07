@@ -8,6 +8,8 @@ import akka.stream.Materializer;
 import akka.stream.javadsl.Source;
 import akka.japi.Pair;
 import akka.japi.pf.PFBuilder;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.typesafe.config.Config;
 import shoppingcart.application.AIContextEntity;
 import shoppingcart.application.ShoppingCartEntity;
@@ -40,6 +42,7 @@ public class VideoServiceEndpointImpl implements VideoServiceEndpoint {
     private final Config config;
     private final ComponentClient componentClient;
     private final Materializer materializer;
+    private final ObjectMapper objectMapper;
 
     private final String geminiAPIKey;
 
@@ -47,28 +50,9 @@ public class VideoServiceEndpointImpl implements VideoServiceEndpoint {
         this.config = config;
         this.componentClient = componentClient;
         this.materializer = materializer;
+        this.objectMapper = new ObjectMapper();
 
         this.geminiAPIKey = config.getString("app.gemini-api-key");
-    }
-
-    private String shoppingCartToJson(ShoppingCart cart) {
-        // Manual JSON construction - using a library like Jackson/Gson is recommended for robustness
-        String itemsJson = cart.items().stream()
-            .map(item -> String.format(
-                "{\"productId\": \"%s\", \"name\": \"%s\", \"quantity\": %d}",
-                item.productId(),
-                // Basic JSON string escaping for quotes and backslashes
-                item.name().replace("\\\\", "\\\\").replace("\"", "\\\""),
-                item.quantity()
-            ))
-            .collect(Collectors.joining(","));
-
-        return String.format(
-            "{\"cartId\": \"%s\", \"items\": [%s], \"checkedOut\": %b}",
-            cart.cartId(),
-            itemsJson,
-            cart.checkedOut()
-        );
     }
 
     private Source<LiveClientMessage, NotUsed> getAIContext(String aiContextId, String cartId) {
@@ -82,12 +66,18 @@ public class VideoServiceEndpointImpl implements VideoServiceEndpoint {
                 .invokeAsync();
 
         CompletionStage<LiveClientMessage> combinedFuture = aiContextFuture.thenCombine(cartFuture, (aiContext, cart) -> {
-            String cartJson = shoppingCartToJson(cart);
-            // Combine AI context and cart JSON into a single string
-            String combinedContext = String.format("Context:\\n%s\\n\\nShopping Cart:\\n%s", aiContext.context(), cartJson);
-            logger.info("Generated initial context message.");
-            // Create a single client message
-            return LiveClientMessage.clientContent(new LiveClientContent(combinedContext, "user"));
+            try {
+                String cartJson = objectMapper.writeValueAsString(cart);
+                // Combine AI context and cart JSON into a single string
+                String combinedContext = String.format("Context:\n%s\n\nShopping Cart:\n%s", aiContext.context(), cartJson);
+                logger.info("Generated initial context message using Jackson");
+                // Create a single client message
+                return LiveClientMessage.clientContent(new LiveClientContent(combinedContext, "user"));
+            } catch (JsonProcessingException e) {
+                logger.error("Failed to serialize ShoppingCart to JSON for cartId '{}'", cartId, e);
+                // Propagate the error by completing the stage exceptionally
+                throw new RuntimeException("Failed to serialize shopping cart", e);
+            }
         });
 
         return Source.completionStage(combinedFuture);
