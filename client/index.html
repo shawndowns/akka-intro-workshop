@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Video Client</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+    <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&amp;display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="main.css">
+    <script src="client-bundle.js"></script>
+</head>
+<body>
+    <header class="header">
+        <nav>
+            <img class="logo" src="/img/akka-logo-white-medium.png" alt="Akka logo" width="109" height="25">
+        </nav>
+    </header>
+    <div class="container description">
+        <h1>Streaming Video AI</h1>
+        <p>This app will stream live video to an Akka agentic service, enrich it with history, and then send to Google Gemini for interpretation saving the responses in a memory database that are streamed back to this client, all without overloading the agentic service or Gemini.</p>
+    </div>
+    <div id="container-wrapper">
+        <div class="container">
+            <div class="context-container">
+                <label for="contextInput">AI Context:</label>
+                <textarea id="contextInput" placeholder="Enter context instructions for Gemini AI..." rows="5">This is Shawn. He is trying to learn ASL alphabet. He will show you a sign and guess what that he is showing. Please tell him correct or tell him the actual sign he is holding up. If he is not holding up a valid ASL alphabet sign then please tell him it is not a valid sign.</textarea>
+                <button id="sendContextButton">Set AI Context</button>
+            </div>
+            <div>
+                <button id="toggleButton">Start</button>
+                <button id="videoToggleButton">Hide Video</button>
+                <button id="debugButton" style="display: none;">Debug Mode</button>
+            </div>
+            <!--div id="status" class="status" style="display: block;">Ready</div-->
+            <video id="webcam" autoplay="" muted=""></video>
+            <canvas id="canvas" style="display: none;"></canvas>
+            <div id="responses" class="response-container"></div>
+        </div>
+    </div>
+    <div class="container footer">
+        <p><small>©2025 Lightbend, Inc. dba Akka. All rights reserved.</small></p>
+    </div>
+</body>
+</html> 
